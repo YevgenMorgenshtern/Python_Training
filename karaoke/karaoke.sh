@@ -143,10 +143,11 @@ else
   echo "   → libx264"
 fi
 
+ASS_PATH="$(pwd)/$WORKDIR/karaoke.ass"
 ffmpeg -y \
   -i "$WORKDIR/video.mp4" \
   -i "$WORKDIR/accompaniment.wav" \
-  -vf "ass=$WORKDIR/karaoke.ass" \
+  -vf "ass=${ASS_PATH}" \
   -map 0:v -map 1:a \
   $VIDEO_CODEC \
   -c:a aac -b:a 192k \
