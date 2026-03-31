@@ -56,19 +56,47 @@ if [ "$SONG_FILE" != "$WORKDIR/original.wav" ]; then
   mv "$SONG_FILE" "$WORKDIR/original.wav"
 fi
 
-# ---------- шаг 2: подавление вокала через ffmpeg ----------
-# Фазовая инверсия убирает центральный вокал (работает только на стерео)
-echo "🎛️  Подавляем вокал (ffmpeg)..."
-CHANNELS=$(ffprobe -v error -select_streams a:0 -show_entries stream=channels -of csv=p=0 "$WORKDIR/original.wav")
-if [ "$CHANNELS" = "2" ]; then
-  ffmpeg -y -i "$WORKDIR/original.wav" \
-    -af "pan=stereo|c0=c0-c1|c1=c1-c0" \
-    "$WORKDIR/accompaniment.wav" -loglevel error
-  echo "   → Стерео, фазовая инверсия применена"
-else
-  echo "   ⚠️  Моно-трек, подавление вокала невозможно — используем оригинал"
-  cp "$WORKDIR/original.wav" "$WORKDIR/accompaniment.wav"
+# ---------- шаг 2: разделение вокала через demucs (conda) ----------
+echo "🎛️  Разделяем вокал (demucs)..."
+
+# Ищем conda
+CONDA_BIN=""
+for candidate in "$HOME/miniconda3/bin/conda" "$HOME/anaconda3/bin/conda"                  "/usr/local/miniconda3/bin/conda" "/opt/miniconda3/bin/conda"                  "/usr/local/Caskroom/miniconda/base/bin/conda"; do
+  if [ -f "$candidate" ]; then
+    CONDA_BIN="$candidate"
+    break
+  fi
+done
+if [ -z "$CONDA_BIN" ]; then
+  echo "❌ conda не найдена. Установите: brew install miniconda"
+  exit 1
 fi
+CONDA_BASE="$(dirname "$(dirname "$CONDA_BIN")")"
+echo "   → conda: $CONDA_BIN"
+
+# Создаём окружение если нет
+if ! "$CONDA_BIN" env list | grep -q "^demucs "; then
+  echo "   → Создаём conda-окружение demucs (python 3.11)..."
+  "$CONDA_BIN" create -n demucs python=3.11 -y -q
+  "$CONDA_BIN" run -n demucs pip install -q demucs
+fi
+
+# Запускаем demucs
+"$CONDA_BIN" run -n demucs python -m demucs   --two-stems=vocals   --out "$WORKDIR/demucs"   "$WORKDIR/original.wav"
+
+# Находим выходные файлы (папка называется по имени модели — htdemucs)
+DEMUCS_DIR=$(find "$WORKDIR/demucs" -maxdepth 2 -name "accompaniment.wav" -o -name "no_vocals.wav" 2>/dev/null | head -1 | xargs dirname 2>/dev/null || true)
+if [ -z "$DEMUCS_DIR" ]; then
+  # demucs --two-stems создаёт vocals.wav и no_vocals.wav
+  DEMUCS_DIR=$(find "$WORKDIR/demucs" -maxdepth 3 -name "no_vocals.wav" 2>/dev/null | head -1 | xargs dirname 2>/dev/null || true)
+fi
+if [ -z "$DEMUCS_DIR" ]; then
+  echo "❌ demucs не создал файлы. Содержимое $WORKDIR/demucs:"
+  find "$WORKDIR/demucs" -type f 2>/dev/null || true
+  exit 1
+fi
+cp "$DEMUCS_DIR/no_vocals.wav" "$WORKDIR/accompaniment.wav"
+echo "   → accompaniment.wav готов"
 
 # ---------- шаг 3: транскрипция с таймингами по словам ----------
 echo "🎙️  Транскрибируем (faster-whisper, язык: $LANG)..."
