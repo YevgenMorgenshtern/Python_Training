@@ -135,23 +135,23 @@ yt-dlp -f "bestvideo[ext=mp4][height<=1080]" --no-playlist "$URL" -o "$WORKDIR/v
 
 # ---------- шаг 6: финальная сборка ----------
 echo "🎬 Собираем финальное видео..."
-if ffmpeg -hide_banner -encoders 2>/dev/null | grep -q h264_videotoolbox; then
-  VIDEO_CODEC="-c:v h264_videotoolbox -q:v 65"
-  echo "   → Apple VideoToolbox"
-else
-  VIDEO_CODEC="-c:v libx264 -preset fast -crf 20"
-  echo "   → libx264"
-fi
 
-ASS_PATH="$(pwd)/$WORKDIR/karaoke.ass"
+# Используем libx264 — VideoToolbox не поддерживает AV1 входной поток
+echo "   → libx264"
+
+# subtitles фильтр ищет файл относительно cwd — копируем туда
+cp "$WORKDIR/karaoke.ass" "./karaoke_render.ass"
+
 ffmpeg -y \
   -i "$WORKDIR/video.mp4" \
   -i "$WORKDIR/accompaniment.wav" \
-  -vf "ass=${ASS_PATH}" \
+  -vf "subtitles=karaoke_render.ass" \
   -map 0:v -map 1:a \
-  $VIDEO_CODEC \
+  -c:v libx264 -preset fast -crf 20 \
   -c:a aac -b:a 192k \
   "$OUTFILE"
+
+rm -f "./karaoke_render.ass"
 
 echo ""
 echo "✅ Готово! Файл: $OUTFILE"
