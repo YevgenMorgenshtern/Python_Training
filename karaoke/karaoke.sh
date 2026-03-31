@@ -82,7 +82,7 @@ if ! "$CONDA_BIN" env list | grep -q "^demucs "; then
 fi
 
 # Запускаем demucs
-"$CONDA_BIN" run -n demucs python -m demucs   --two-stems=vocals   --out "$WORKDIR/demucs"   "$WORKDIR/original.wav"
+"$CONDA_BIN" run -n demucs python -m demucs   -n mdx_extra   --two-stems=vocals   --out "$WORKDIR/demucs"   "$WORKDIR/original.wav"
 
 # Находим выходные файлы (папка называется по имени модели — htdemucs)
 DEMUCS_DIR=$(find "$WORKDIR/demucs" -maxdepth 2 -name "accompaniment.wav" -o -name "no_vocals.wav" 2>/dev/null | head -1 | xargs dirname 2>/dev/null || true)
@@ -111,8 +111,12 @@ segments, info = model.transcribe(
     language=lang,
     word_timestamps=True,
     beam_size=5,
-    vad_filter=True,
-    vad_parameters=dict(min_silence_duration_ms=500),
+    vad_filter=False,
+    condition_on_previous_text=True,
+    no_speech_threshold=0.6,
+    log_prob_threshold=-1.0,
+    compression_ratio_threshold=2.4,
+    temperature=0.0,
 )
 
 out = {"segments": []}
