@@ -1,27 +1,27 @@
 #!/usr/bin/env bash
 # ============================================================
-# karaoke.sh — создаёт караоке-видео из YouTube ссылки
-# macOS, без llvmlite/numba/demucs
-#
-# Зависимости: ffmpeg, yt-dlp, python3.12 (все через brew)
-# Python: только faster-whisper (CTranslate2, без llvmlite)
+# karaoke.sh — создаёт домашнее караоке-видео
 #
 # Использование:
-#   ./karaoke.sh <youtube_url> <language> <outfile>
+#   ./karaoke.sh <youtube_url_песни> <youtube_url_видео> <язык> <outfile>
+#
 # Пример:
-#   ./karaoke.sh "https://youtu.be/xxx" de karaoke_final.mp4
-#   ./karaoke.sh "https://youtu.be/xxx" auto karaoke_final.mp4
+#   ./karaoke.sh "https://youtu.be/AAA" "https://youtu.be/BBB" ru karaoke.mp4
+#
+# Если видеоряд и песня — одно видео:
+#   ./karaoke.sh "https://youtu.be/AAA" "https://youtu.be/AAA" ru karaoke.mp4
 # ============================================================
 set -euo pipefail
 
-if [ "$#" -ne 3 ]; then
-  echo "Использование: $0 <youtube_url> <language> <outfile>"
+if [ "$#" -ne 4 ]; then
+  echo "Использование: $0 <url_песни> <url_видео> <язык> <outfile>"
   exit 1
 fi
 
-URL="$1"
-LANG="$2"
-OUTFILE="$3"
+URL_SONG="$1"
+URL_VIDEO="$2"
+LANG="$3"
+OUTFILE="$4"
 WORKDIR="karaoke_tmp"
 mkdir -p "$WORKDIR"
 
@@ -30,8 +30,8 @@ echo "🔍 Проверка зависимостей..."
 if ! command -v brew &>/dev/null; then
   echo "❌ Homebrew не установлен: https://brew.sh"; exit 1
 fi
-for tool in ffmpeg yt-dlp; do
-  command -v "$tool" &>/dev/null || brew install "$tool"
+for tool in ffmpeg-full yt-dlp; do
+  command -v "${tool%%-*}" &>/dev/null || brew install "$tool"
 done
 command -v python3.12 &>/dev/null || brew install python@3.12
 
@@ -42,72 +42,76 @@ if [ ! -d "$VENV_DIR" ]; then
   python3.12 -m venv "$VENV_DIR"
 fi
 PY="$VENV_DIR/bin/python3"
-
 "$PY" -m pip install -q --upgrade pip
 "$PY" -m pip install -q faster-whisper
 
-# ---------- шаг 1: скачать аудио ----------
-echo "⬇️  Скачиваем аудио..."
-# Скачиваем лучшее стерео-аудио для транскрипции
-yt-dlp -x --audio-format wav --audio-quality 0 --no-playlist "$URL" -o "$WORKDIR/original.%(ext)s"
-SONG_FILE=$(find "$WORKDIR" -maxdepth 1 -name "original.*" | head -1)
-[ -z "$SONG_FILE" ] && { echo "❌ Не удалось скачать аудио."; exit 1; }
-if [ "$SONG_FILE" != "$WORKDIR/original.wav" ]; then
-  mv "$SONG_FILE" "$WORKDIR/original.wav"
+# ============================================================
+# ШАГ 1: Скачать аудио
+# ============================================================
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  ШАГ 1 из 5: Скачиваем аудио с YouTube"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+if [ ! -f "$WORKDIR/song.mp3" ]; then
+  yt-dlp -x --audio-format mp3 --audio-quality 0 \
+    --no-playlist "$URL_SONG" -o "$WORKDIR/song.mp3"
+  echo "✅ Аудио сохранено: $WORKDIR/song.mp3"
+else
+  echo "⏭️  Аудио уже есть, пропускаем."
 fi
 
-# ---------- шаг 2: разделение вокала через demucs (conda) ----------
-echo "🎛️  Разделяем вокал (demucs)..."
+# ============================================================
+# ШАГ 2: Удаление вокала (вручную через онлайн-сервис)
+# ============================================================
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  ШАГ 2 из 5: Удаление вокала"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-# Ищем conda
-CONDA_BIN=""
-for candidate in "$HOME/miniconda3/bin/conda" "$HOME/anaconda3/bin/conda"                  "/usr/local/miniconda3/bin/conda" "/opt/miniconda3/bin/conda"                  "/usr/local/Caskroom/miniconda/base/bin/conda"; do
-  if [ -f "$candidate" ]; then
-    CONDA_BIN="$candidate"
-    break
+if [ ! -f "$WORKDIR/instrumental.mp3" ] && [ ! -f "$WORKDIR/instrumental.wav" ]; then
+  echo ""
+  echo "  Загрузи файл  👉  $(pwd)/$WORKDIR/song.mp3"
+  echo "  на один из сервисов:"
+  echo ""
+  echo "    • https://vocalremover.org  (бесплатно, без регистрации)"
+  echo "    • https://lalal.ai          (10 мин бесплатно, лучше качество)"
+  echo "    • https://music.ai          (есть бесплатный tier)"
+  echo ""
+  echo "  Скачай результат (instrumental / music / accompaniment)"
+  echo "  и сохрани его как:"
+  echo ""
+  echo "    👉  $(pwd)/$WORKDIR/instrumental.mp3"
+  echo ""
+  read -r -p "  Готово? Нажми Enter чтобы продолжить... "
+
+  # Проверяем что файл появился
+  if [ ! -f "$WORKDIR/instrumental.mp3" ] && [ ! -f "$WORKDIR/instrumental.wav" ]; then
+    echo "❌ Файл $WORKDIR/instrumental.mp3 не найден. Положи его туда и запусти скрипт снова."
+    exit 1
   fi
-done
-if [ -z "$CONDA_BIN" ]; then
-  echo "❌ conda не найдена. Установите: brew install miniconda"
-  exit 1
-fi
-CONDA_BASE="$(dirname "$(dirname "$CONDA_BIN")")"
-echo "   → conda: $CONDA_BIN"
-
-# Создаём окружение если нет
-if ! "$CONDA_BIN" env list | grep -q "^demucs "; then
-  echo "   → Создаём conda-окружение demucs (python 3.11)..."
-  "$CONDA_BIN" create -n demucs python=3.11 -y -q
-  "$CONDA_BIN" run -n demucs pip install -q demucs
 fi
 
-# Запускаем demucs
-"$CONDA_BIN" run -n demucs python -m demucs   -n mdx_extra   --two-stems=vocals   --out "$WORKDIR/demucs"   "$WORKDIR/original.wav"
+INSTRUMENTAL=$([ -f "$WORKDIR/instrumental.wav" ] && echo "$WORKDIR/instrumental.wav" || echo "$WORKDIR/instrumental.mp3")
+echo "✅ Instrumental: $INSTRUMENTAL"
 
-# Находим выходные файлы (папка называется по имени модели — htdemucs)
-DEMUCS_DIR=$(find "$WORKDIR/demucs" -maxdepth 2 -name "accompaniment.wav" -o -name "no_vocals.wav" 2>/dev/null | head -1 | xargs dirname 2>/dev/null || true)
-if [ -z "$DEMUCS_DIR" ]; then
-  # demucs --two-stems создаёт vocals.wav и no_vocals.wav
-  DEMUCS_DIR=$(find "$WORKDIR/demucs" -maxdepth 3 -name "no_vocals.wav" 2>/dev/null | head -1 | xargs dirname 2>/dev/null || true)
-fi
-if [ -z "$DEMUCS_DIR" ]; then
-  echo "❌ demucs не создал файлы. Содержимое $WORKDIR/demucs:"
-  find "$WORKDIR/demucs" -type f 2>/dev/null || true
-  exit 1
-fi
-cp "$DEMUCS_DIR/no_vocals.wav" "$WORKDIR/accompaniment.wav"
-echo "   → accompaniment.wav готов"
+# ============================================================
+# ШАГ 3: Транскрипция
+# ============================================================
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  ШАГ 3 из 5: Транскрипция (Whisper)"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-# ---------- шаг 3: транскрипция с таймингами по словам ----------
-echo "🎙️  Транскрибируем (faster-whisper, язык: $LANG)..."
-"$PY" - <<PYEOF
+if [ ! -f "$WORKDIR/vocals.json" ]; then
+  "$PY" - <<PYEOF
 from faster_whisper import WhisperModel
 import json
 
 lang = None if "$LANG" == "auto" else "$LANG"
+print(f"   → Модель: large-v3, язык: {lang or 'авто'}")
 model = WhisperModel("large-v3", device="auto", compute_type="auto")
 segments, info = model.transcribe(
-    "$WORKDIR/original.wav",
+    "$WORKDIR/song.mp3",
     language=lang,
     word_timestamps=True,
     beam_size=5,
@@ -126,11 +130,20 @@ for seg in segments:
 
 with open("$WORKDIR/vocals.json", "w", encoding="utf-8") as f:
     json.dump(out, f, ensure_ascii=False, indent=2)
-print(f"Готово, сегментов: {len(out['segments'])}")
+print(f"✅ Транскрипция готова, сегментов: {len(out['segments'])}")
 PYEOF
+else
+  echo "⏭️  Транскрипция уже есть, пропускаем."
+fi
 
-# ---------- шаг 4: генерация .ass субтитров ----------
-echo "📝 Генерируем субтитры..."
+# ============================================================
+# ШАГ 4: Генерация субтитров
+# ============================================================
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  ШАГ 4 из 5: Генерация субтитров (.ass)"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
 export WORKDIR
 "$PY" - <<'PYEOF'
 import json, os
@@ -167,25 +180,32 @@ for seg in data["segments"]:
 
 with open(f"{workdir}/karaoke.ass", "w", encoding="utf-8") as f:
     f.write(ass_header + "\n".join(lines))
-print(f"karaoke.ass готов, строк: {len(lines)}")
+print(f"✅ Субтитры готовы, строк: {len(lines)}")
 PYEOF
 
-# ---------- шаг 5: скачать видео ----------
-echo "⬇️  Скачиваем видео..."
-yt-dlp -f "bestvideo[ext=mp4][height<=1080]" --no-playlist "$URL" -o "$WORKDIR/video.mp4"
+# ============================================================
+# ШАГ 5: Скачать видеоряд и собрать финальное видео
+# ============================================================
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  ШАГ 5 из 5: Сборка финального видео"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-# ---------- шаг 6: финальная сборка ----------
+if [ ! -f "$WORKDIR/video.mp4" ]; then
+  echo "⬇️  Скачиваем видеоряд..."
+  yt-dlp -f "bestvideo[ext=mp4][height<=1080]" \
+    --no-playlist "$URL_VIDEO" -o "$WORKDIR/video.mp4"
+  echo "✅ Видео сохранено."
+else
+  echo "⏭️  Видео уже есть, пропускаем."
+fi
+
 echo "🎬 Собираем финальное видео..."
-
-# Используем libx264 — VideoToolbox не поддерживает AV1 входной поток
-echo "   → libx264"
-
-# subtitles фильтр ищет файл относительно cwd — копируем туда
 cp "$WORKDIR/karaoke.ass" "./karaoke_render.ass"
 
 ffmpeg -y \
   -i "$WORKDIR/video.mp4" \
-  -i "$WORKDIR/accompaniment.wav" \
+  -i "$INSTRUMENTAL" \
   -vf "subtitles=karaoke_render.ass" \
   -map 0:v -map 1:a \
   -c:v libx264 -preset fast -crf 20 \
