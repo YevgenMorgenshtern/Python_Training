@@ -48,20 +48,27 @@ PY="$VENV_DIR/bin/python3"
 
 # ---------- шаг 1: скачать аудио ----------
 echo "⬇️  Скачиваем аудио..."
-yt-dlp -x --audio-format wav --no-playlist "$URL" -o "$WORKDIR/song.%(ext)s"
-SONG_FILE=$(find "$WORKDIR" -maxdepth 1 -name "*.wav" | head -1)
+# Скачиваем лучшее стерео-аудио для транскрипции
+yt-dlp -x --audio-format wav --audio-quality 0 --no-playlist "$URL" -o "$WORKDIR/original.%(ext)s"
+SONG_FILE=$(find "$WORKDIR" -maxdepth 1 -name "original.*" | head -1)
 [ -z "$SONG_FILE" ] && { echo "❌ Не удалось скачать аудио."; exit 1; }
-if [ "$SONG_FILE" != "$WORKDIR/song.wav" ]; then
-  cp "$SONG_FILE" "$WORKDIR/song.wav"
+if [ "$SONG_FILE" != "$WORKDIR/original.wav" ]; then
+  mv "$SONG_FILE" "$WORKDIR/original.wav"
 fi
 
 # ---------- шаг 2: подавление вокала через ffmpeg ----------
-# Используем фазовую инверсию (каналы L-R): убирает центральный вокал
+# Фазовая инверсия убирает центральный вокал (работает только на стерео)
 echo "🎛️  Подавляем вокал (ffmpeg)..."
-ffmpeg -y -i "$WORKDIR/song.wav" \
-  -af "pan=stereo|c0=c0-c1|c1=c1-c0" \
-  "$WORKDIR/accompaniment.wav" -loglevel error
-echo "   → accompaniment.wav готов"
+CHANNELS=$(ffprobe -v error -select_streams a:0 -show_entries stream=channels -of csv=p=0 "$WORKDIR/original.wav")
+if [ "$CHANNELS" = "2" ]; then
+  ffmpeg -y -i "$WORKDIR/original.wav" \
+    -af "pan=stereo|c0=c0-c1|c1=c1-c0" \
+    "$WORKDIR/accompaniment.wav" -loglevel error
+  echo "   → Стерео, фазовая инверсия применена"
+else
+  echo "   ⚠️  Моно-трек, подавление вокала невозможно — используем оригинал"
+  cp "$WORKDIR/original.wav" "$WORKDIR/accompaniment.wav"
+fi
 
 # ---------- шаг 3: транскрипция с таймингами по словам ----------
 echo "🎙️  Транскрибируем (faster-whisper, язык: $LANG)..."
@@ -72,10 +79,12 @@ import json
 lang = None if "$LANG" == "auto" else "$LANG"
 model = WhisperModel("large-v3", device="auto", compute_type="auto")
 segments, info = model.transcribe(
-    "$WORKDIR/song.wav",
+    "$WORKDIR/original.wav",
     language=lang,
     word_timestamps=True,
     beam_size=5,
+    vad_filter=True,
+    vad_parameters=dict(min_silence_duration_ms=500),
 )
 
 out = {"segments": []}
